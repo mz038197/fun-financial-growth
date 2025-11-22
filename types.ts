@@ -5,6 +5,7 @@ export enum TransactionType {
 
 export interface Child {
   id: string;
+  userId?: string; // Owner of this record (Parent's UID)
   name: string;
   avatar: string; // Emoji character
   createdAt: number;
@@ -12,6 +13,7 @@ export interface Child {
 
 export interface Transaction {
   id: string;
+  userId?: string; // Owner of this record
   childId: string; // Link to a specific child
   date: string; // ISO Date string YYYY-MM-DD
   amount: number;
@@ -22,6 +24,7 @@ export interface Transaction {
 
 export interface Settlement {
   id: string;
+  userId?: string; // Owner of this record
   childId: string; // Link to a specific child
   date: string; // ISO Date string YYYY-MM-DD
   amountCleared: number; // The pending amount that was cleared

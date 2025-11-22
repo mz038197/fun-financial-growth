@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { ChevronLeft, ChevronRight, Wallet, PiggyBank, History, Plus, Users, Pencil, CloudOff, Cloud } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Wallet, PiggyBank, History, Plus, Users, Pencil, CloudOff, Cloud, LogOut } from 'lucide-react';
 import { 
   collection, 
   onSnapshot, 
@@ -10,14 +10,21 @@ import {
   where, 
   getDocs 
 } from 'firebase/firestore';
-import { db } from './firebase';
+import { User } from 'firebase/auth';
+import { db, auth } from './firebase';
 import { getMonthData, formatDateISO, isSameDay } from './utils/dateHelpers';
 import { Transaction, TransactionType, Settlement, DaySummary, Child } from './types';
 import { WEEKDAYS, APP_STORAGE_KEYS } from './constants';
 import DayModal from './components/DayModal';
 import AddChildModal from './components/AddChildModal';
+import LoginPage from './components/LoginPage';
 
 const App: React.FC = () => {
+  // --- Auth State ---
+  const [user, setUser] = useState<User | null>(null);
+  const [isGuest, setIsGuest] = useState(false);
+  const [authLoading, setAuthLoading] = useState(true);
+
   // --- State ---
   const [currentDate, setCurrentDate] = useState(new Date());
   
@@ -33,17 +40,34 @@ const App: React.FC = () => {
   const [isChildModalOpen, setIsChildModalOpen] = useState(false);
   const [childModalMode, setChildModalMode] = useState<'add' | 'edit'>('add');
 
-  // Determine if we are using Firestore or LocalStorage
-  const useFirestore = useMemo(() => !!db, []);
+  // Determine if we are using Firestore (Must have DB instance AND User logged in)
+  const useFirestore = useMemo(() => !!db && !!user && !isGuest, [user, isGuest]);
+
+  // --- Auth Listener ---
+  useEffect(() => {
+    if (auth) {
+      const unsubscribe = auth.onAuthStateChanged((currentUser) => {
+        setUser(currentUser);
+        setAuthLoading(false);
+        if (currentUser) setIsGuest(false);
+      });
+      return () => unsubscribe();
+    } else {
+      setAuthLoading(false);
+    }
+  }, []);
 
   // --- Data Subscriptions (Dual Mode) ---
 
   useEffect(() => {
-    if (useFirestore && db) {
-      // --- FIRESTORE MODE ---
+    if (authLoading) return; // Wait for auth check
+
+    if (useFirestore && db && user) {
+      // --- FIRESTORE MODE (User specific) ---
       
-      // 1. Children
-      const unsubChildren = onSnapshot(collection(db, 'children'), (snapshot) => {
+      // 1. Children (Filter by userId)
+      const qChildren = query(collection(db, 'children'), where('userId', '==', user.uid));
+      const unsubChildren = onSnapshot(qChildren, (snapshot) => {
         const loadedChildren: Child[] = [];
         snapshot.forEach((doc) => loadedChildren.push(doc.data() as Child));
         loadedChildren.sort((a, b) => a.createdAt - b.createdAt);
@@ -52,7 +76,6 @@ const App: React.FC = () => {
         // Set initial child
         if (loadedChildren.length > 0) {
           setCurrentChildId(prev => {
-            // Verify current ID still exists
             const exists = loadedChildren.find(c => c.id === prev);
             return exists ? prev : loadedChildren[0].id;
           });
@@ -61,16 +84,16 @@ const App: React.FC = () => {
         }
       }, (error) => console.error("Firestore Children Error:", error));
 
-      // 2. Transactions
-      const qTx = query(collection(db, 'transactions'));
+      // 2. Transactions (Filter by userId)
+      const qTx = query(collection(db, 'transactions'), where('userId', '==', user.uid));
       const unsubTx = onSnapshot(qTx, (snapshot) => {
         const loaded: Transaction[] = [];
         snapshot.forEach((doc) => loaded.push(doc.data() as Transaction));
         setTransactions(loaded);
       }, (error) => console.error("Firestore Tx Error:", error));
 
-      // 3. Settlements
-      const qSet = query(collection(db, 'settlements'));
+      // 3. Settlements (Filter by userId)
+      const qSet = query(collection(db, 'settlements'), where('userId', '==', user.uid));
       const unsubSet = onSnapshot(qSet, (snapshot) => {
         const loaded: Settlement[] = [];
         snapshot.forEach((doc) => loaded.push(doc.data() as Settlement));
@@ -82,8 +105,8 @@ const App: React.FC = () => {
         unsubTx();
         unsubSet();
       };
-    } else {
-      // --- LOCAL STORAGE MODE (Fallback) ---
+    } else if (isGuest || (!db && !user)) {
+      // --- LOCAL STORAGE MODE (Fallback/Guest) ---
       console.log("Using LocalStorage Mode");
       
       const loadFromStorage = () => {
@@ -110,23 +133,22 @@ const App: React.FC = () => {
       };
 
       loadFromStorage();
-
-      // Listen for storage events (optional, for multi-tab sync)
       window.addEventListener('storage', loadFromStorage);
       return () => window.removeEventListener('storage', loadFromStorage);
     }
-  }, [useFirestore]);
+  }, [useFirestore, user, isGuest, authLoading]);
 
-  // --- Migration (Only runs if Firestore is active) ---
+  // --- Migration (Local -> Cloud) ---
   useEffect(() => {
     const migrateData = async () => {
-      if (!useFirestore || !db) return;
+      if (!useFirestore || !db || !user) return;
 
       try {
-        const childrenSnapshot = await getDocs(collection(db, 'children'));
+        // Only migrate if cloud is empty for this user
+        const childrenSnapshot = await getDocs(query(collection(db, 'children'), where('userId', '==', user.uid)));
         if (!childrenSnapshot.empty) return; 
 
-        console.log("Migrating local data to Firestore...");
+        console.log("Migrating local data to Firestore for user:", user.uid);
         const storedChildrenStr = localStorage.getItem(APP_STORAGE_KEYS.CHILDREN);
         const storedTransactionsStr = localStorage.getItem(APP_STORAGE_KEYS.TRANSACTIONS);
         const storedSettlementsStr = localStorage.getItem(APP_STORAGE_KEYS.SETTLEMENTS);
@@ -134,19 +156,23 @@ const App: React.FC = () => {
         if (storedChildrenStr) {
           const localChildren: Child[] = JSON.parse(storedChildrenStr);
           for (const child of localChildren) {
-            await setDoc(doc(db, 'children', child.id), child);
+            // Add userId to migrated data
+            const newChild = { ...child, userId: user.uid };
+            await setDoc(doc(db, 'children', child.id), newChild);
           }
         }
         if (storedTransactionsStr) {
           const localTx: Transaction[] = JSON.parse(storedTransactionsStr);
           for (const tx of localTx) {
-            await setDoc(doc(db, 'transactions', tx.id), tx);
+            const newTx = { ...tx, userId: user.uid };
+            await setDoc(doc(db, 'transactions', tx.id), newTx);
           }
         }
         if (storedSettlementsStr) {
           const localSettlements: Settlement[] = JSON.parse(storedSettlementsStr);
           for (const s of localSettlements) {
-            await setDoc(doc(db, 'settlements', s.id), s);
+            const newS = { ...s, userId: user.uid };
+            await setDoc(doc(db, 'settlements', s.id), newS);
           }
         }
       } catch (e) {
@@ -155,75 +181,31 @@ const App: React.FC = () => {
     };
 
     migrateData();
-  }, [useFirestore]);
+  }, [useFirestore, user]);
 
   // --- Helper for LocalStorage Updates ---
   const updateLocalStorage = (key: string, data: any) => {
     localStorage.setItem(key, JSON.stringify(data));
-    // Manually trigger a re-render for local mode by updating state directly 
-    // (In a real app, we might use a custom hook, but here we update state + storage)
     if (key === APP_STORAGE_KEYS.CHILDREN) setChildren(data);
     if (key === APP_STORAGE_KEYS.TRANSACTIONS) setTransactions(data);
     if (key === APP_STORAGE_KEYS.SETTLEMENTS) setSettlements(data);
   };
 
-  // --- Derived State ---
-  const currentChild = useMemo(() => 
-    children.find(c => c.id === currentChildId), 
-  [children, currentChildId]);
-
-  const childTransactions = useMemo(() => 
-    transactions.filter(t => t.childId === currentChildId),
-  [transactions, currentChildId]);
-
-  const childSettlements = useMemo(() => 
-    settlements.filter(s => s.childId === currentChildId),
-  [settlements, currentChildId]);
-
-  const totalBalance = useMemo(() => {
-    return childTransactions.reduce((acc, t) => {
-      return t.type === TransactionType.INCOME ? acc + t.amount : acc - t.amount;
-    }, 0);
-  }, [childTransactions]);
-
-  const lastSettlement = useMemo(() => {
-    if (childSettlements.length === 0) return null;
-    return [...childSettlements].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
-  }, [childSettlements]);
-
-  const pendingSettlementAmount = useMemo(() => {
-    let filteredTransactions = childTransactions;
-    if (lastSettlement) {
-      filteredTransactions = childTransactions.filter(t => t.date > lastSettlement.date);
-    }
-    return filteredTransactions.reduce((acc, t) => {
-      return t.type === TransactionType.INCOME ? acc + t.amount : acc - t.amount;
-    }, 0);
-  }, [childTransactions, lastSettlement]);
-
-  const getPendingAmountForDate = (targetDateStr: string) => {
-     if (!currentChildId) return 0;
-     const prevSettlements = childSettlements.filter(s => s.date < targetDateStr);
-     const lastPrevSettlement = prevSettlements.sort((a, b) => b.date.localeCompare(a.date))[0];
-     const startDate = lastPrevSettlement ? lastPrevSettlement.date : '0000-00-00';
-     const txsInRange = childTransactions.filter(t => t.date > startDate && t.date <= targetDateStr);
-     return txsInRange.reduce((acc, t) => {
-        return t.type === TransactionType.INCOME ? acc + t.amount : acc - t.amount;
-     }, 0);
-  };
-
-  // --- Calendar Data ---
-  const { year, month, daysInMonth, prefixDays } = getMonthData(currentDate);
-  const nextMonth = () => setCurrentDate(new Date(year, month + 1, 1));
-  const prevMonth = () => setCurrentDate(new Date(year, month - 1, 1));
-  const goToToday = () => setCurrentDate(new Date());
-
-  const handleDateClick = (dateStr: string) => {
-    setSelectedDate(dateStr);
-    setIsModalOpen(true);
-  };
-
   // --- Actions ---
+  
+  const handleSignOut = async () => {
+    if (auth) {
+      await auth.signOut();
+      setUser(null);
+      // Clear local state to avoid flashing old data
+      setChildren([]);
+      setTransactions([]);
+      setSettlements([]);
+      setCurrentChildId(null);
+    } else {
+      setIsGuest(false);
+    }
+  };
 
   const openAddChildModal = () => {
     setChildModalMode('add');
@@ -239,11 +221,12 @@ const App: React.FC = () => {
   const handleSaveChild = async (name: string, avatar: string) => {
     const newChildData = { name, avatar };
     
-    if (useFirestore && db) {
+    if (useFirestore && db && user) {
       try {
         if (childModalMode === 'add') {
           const newChild: Child = {
             id: crypto.randomUUID(),
+            userId: user.uid, // Bind to user
             name,
             avatar,
             createdAt: Date.now(),
@@ -278,16 +261,18 @@ const App: React.FC = () => {
     }
   };
 
-  const handleAddTransaction = async (newTx: Omit<Transaction, 'id' | 'createdAt' | 'childId'>) => {
+  const handleAddTransaction = async (newTx: Omit<Transaction, 'id' | 'createdAt' | 'childId' | 'userId'>) => {
     if (!currentChildId) return;
+    
     const transaction: Transaction = {
       ...newTx,
       id: crypto.randomUUID(),
       childId: currentChildId,
       createdAt: Date.now(),
+      ...(user && { userId: user.uid }) // Bind to user if logged in
     };
 
-    if (useFirestore && db) {
+    if (useFirestore && db && user) {
       try {
         await setDoc(doc(db, 'transactions', transaction.id), transaction);
       } catch (error) {
@@ -321,13 +306,15 @@ const App: React.FC = () => {
       date: selectedDate,
       amountCleared: amountToClear,
       createdAt: Date.now(),
+      ...(user && { userId: user.uid }) // Bind to user
     };
 
-    if (useFirestore && db) {
+    if (useFirestore && db && user) {
       try {
         // Delete existing for this day/child first
         const q = query(
           collection(db, 'settlements'), 
+          where('userId', '==', user.uid),
           where('childId', '==', currentChildId),
           where('date', '==', selectedDate)
         );
@@ -358,7 +345,62 @@ const App: React.FC = () => {
     }
   };
 
-  // --- Render Helpers ---
+  // --- Derived State Calculation (Same as before) ---
+  const currentChild = useMemo(() => children.find(c => c.id === currentChildId), [children, currentChildId]);
+  const childTransactions = useMemo(() => transactions.filter(t => t.childId === currentChildId), [transactions, currentChildId]);
+  const childSettlements = useMemo(() => settlements.filter(s => s.childId === currentChildId), [settlements, currentChildId]);
+
+  const totalBalance = useMemo(() => {
+    return childTransactions.reduce((acc, t) => t.type === TransactionType.INCOME ? acc + t.amount : acc - t.amount, 0);
+  }, [childTransactions]);
+
+  const lastSettlement = useMemo(() => {
+    if (childSettlements.length === 0) return null;
+    return [...childSettlements].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
+  }, [childSettlements]);
+
+  const pendingSettlementAmount = useMemo(() => {
+    let filteredTransactions = childTransactions;
+    if (lastSettlement) {
+      filteredTransactions = childTransactions.filter(t => t.date > lastSettlement.date);
+    }
+    return filteredTransactions.reduce((acc, t) => t.type === TransactionType.INCOME ? acc + t.amount : acc - t.amount, 0);
+  }, [childTransactions, lastSettlement]);
+
+  const getPendingAmountForDate = (targetDateStr: string) => {
+     if (!currentChildId) return 0;
+     const prevSettlements = childSettlements.filter(s => s.date < targetDateStr);
+     const lastPrevSettlement = prevSettlements.sort((a, b) => b.date.localeCompare(a.date))[0];
+     const startDate = lastPrevSettlement ? lastPrevSettlement.date : '0000-00-00';
+     const txsInRange = childTransactions.filter(t => t.date > startDate && t.date <= targetDateStr);
+     return txsInRange.reduce((acc, t) => t.type === TransactionType.INCOME ? acc + t.amount : acc - t.amount, 0);
+  };
+
+  // --- View ---
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-100">
+        <div className="animate-spin rounded-full h-12 w-12 border-4 border-indigo-600 border-t-transparent"></div>
+      </div>
+    );
+  }
+
+  if (!user && !isGuest) {
+    return <LoginPage onGuestLogin={() => setIsGuest(true)} />;
+  }
+
+  // --- Calendar Logic ---
+  const { year, month, daysInMonth, prefixDays } = getMonthData(currentDate);
+  const nextMonth = () => setCurrentDate(new Date(year, month + 1, 1));
+  const prevMonth = () => setCurrentDate(new Date(year, month - 1, 1));
+  const goToToday = () => setCurrentDate(new Date());
+
+  const handleDateClick = (dateStr: string) => {
+    setSelectedDate(dateStr);
+    setIsModalOpen(true);
+  };
+
   const getDaySummary = (dateStr: string): DaySummary => {
     if (!currentChildId) return { date: dateStr, income: 0, expense: 0, isSettled: false, hasData: false };
     const dayTxs = childTransactions.filter(t => t.date === dateStr);
@@ -373,21 +415,31 @@ const App: React.FC = () => {
       
       {/* Header */}
       <header className="bg-indigo-600 text-white rounded-b-3xl shadow-lg z-10 relative transition-all duration-300">
-        {/* Mode Indicator */}
-        <div className="absolute top-2 right-2">
-           {useFirestore ? (
-             <div className="flex items-center gap-1 text-[10px] bg-indigo-500/50 px-2 py-1 rounded-full text-green-200 border border-green-400/30">
-               <Cloud size={12} /> 雲端同步中
-             </div>
-           ) : (
-             <div className="flex items-center gap-1 text-[10px] bg-orange-500/50 px-2 py-1 rounded-full text-orange-100 border border-orange-400/30">
-               <CloudOff size={12} /> 本機模式 (未設定 Firebase)
-             </div>
-           )}
+        {/* Header Top Row */}
+        <div className="flex justify-between items-start px-4 pt-3">
+           <div className="flex items-center gap-2">
+             {useFirestore ? (
+               <div className="flex items-center gap-1 text-[10px] bg-indigo-500/50 px-2 py-1 rounded-full text-green-200 border border-green-400/30">
+                 <Cloud size={12} /> 雲端同步中
+               </div>
+             ) : (
+               <div className="flex items-center gap-1 text-[10px] bg-orange-500/50 px-2 py-1 rounded-full text-orange-100 border border-orange-400/30">
+                 <CloudOff size={12} /> 離線模式
+               </div>
+             )}
+           </div>
+           
+           <button 
+             onClick={handleSignOut}
+             className="text-indigo-200 hover:text-white p-1 rounded-full hover:bg-indigo-500 transition"
+             title="登出"
+           >
+             <LogOut size={18} />
+           </button>
         </div>
 
         {/* Child List */}
-        <div className="flex items-center px-4 pt-6 pb-2 overflow-x-auto no-scrollbar gap-3">
+        <div className="flex items-center px-4 pt-4 pb-2 overflow-x-auto no-scrollbar gap-3">
           {children.map(child => (
             <button
               key={child.id}
