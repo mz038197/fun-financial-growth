@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { ChevronLeft, ChevronRight, Wallet, PiggyBank, History, Plus, Users, Pencil, CloudOff, Cloud, LogOut } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Wallet, PiggyBank, History, Plus, Users, Pencil, CloudOff, Cloud, LogOut, X } from 'lucide-react';
 import { 
   collection, 
   onSnapshot, 
@@ -13,17 +13,19 @@ import {
 import { User } from 'firebase/auth';
 import { db, auth } from './firebase';
 import { getMonthData, formatDateISO, isSameDay } from './utils/dateHelpers';
-import { Transaction, TransactionType, Settlement, DaySummary, Child } from './types';
+import { Transaction, TransactionType, Settlement, DaySummary, Child, UserProfile } from './types';
 import { WEEKDAYS, APP_STORAGE_KEYS } from './constants';
 import DayModal from './components/DayModal';
 import AddChildModal from './components/AddChildModal';
 import LoginPage from './components/LoginPage';
+import TeamManagement from './components/TeamManagement';
 
 const App: React.FC = () => {
   // --- Auth State ---
   const [user, setUser] = useState<User | null>(null);
   const [isGuest, setIsGuest] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
 
   // --- State ---
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -39,9 +41,16 @@ const App: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isChildModalOpen, setIsChildModalOpen] = useState(false);
   const [childModalMode, setChildModalMode] = useState<'add' | 'edit'>('add');
+  const [showTeamManagement, setShowTeamManagement] = useState(false);
 
   // Determine if we are using Firestore (Must have DB instance AND User logged in)
   const useFirestore = useMemo(() => !!db && !!user && !isGuest, [user, isGuest]);
+
+  // Get user's team ID (use teamId if in team, otherwise use own uid for personal data)
+  const userTeamId = useMemo(() => {
+    if (isGuest || !user) return null;
+    return userProfile?.teamId || user.uid;
+  }, [userProfile, user, isGuest]);
 
   // --- Auth Listener ---
   useEffect(() => {
@@ -57,23 +66,64 @@ const App: React.FC = () => {
     }
   }, []);
 
+  // --- User Profile Listener ---
+  useEffect(() => {
+    if (!user || !db || isGuest) {
+      setUserProfile(null);
+      return;
+    }
+
+    const unsubProfile = onSnapshot(
+      doc(db, 'userProfiles', user.uid),
+      (docSnap) => {
+        if (docSnap.exists()) {
+          setUserProfile(docSnap.data() as UserProfile);
+        } else {
+          // 首次登入，創建使用者檔案
+          const newProfile: UserProfile = {
+            uid: user.uid,
+            email: user.email || '',
+            displayName: user.displayName || undefined,
+            teamId: null, // 預設沒有團隊，使用個人資料
+            createdAt: Date.now()
+          };
+          setDoc(doc(db, 'userProfiles', user.uid), newProfile);
+          setUserProfile(newProfile);
+        }
+      },
+      (error) => {
+        console.error("Profile listener error:", error);
+        // 如果出錯，設置預設檔案（使用個人資料）
+        setUserProfile({
+          uid: user.uid,
+          email: user.email || '',
+          displayName: user.displayName || undefined,
+          teamId: null,
+          createdAt: Date.now()
+        });
+      }
+    );
+
+    return () => unsubProfile();
+  }, [user, db, isGuest]);
+
   // --- Data Subscriptions (Dual Mode) ---
 
   useEffect(() => {
-    if (authLoading) return; // Wait for auth check
+    if (authLoading || !userTeamId) return; // Wait for auth check and teamId
 
     if (useFirestore && db && user) {
-      // --- FIRESTORE MODE (User specific) ---
+      // --- FIRESTORE 模式 (基於團隊的資料共享) ---
       
-      // 1. Children (Filter by userId)
-      const qChildren = query(collection(db, 'children'), where('userId', '==', user.uid));
+      // 1. Children (依 teamId 過濾)
+      const qChildren = query(collection(db, 'children'), where('teamId', '==', userTeamId));
       const unsubChildren = onSnapshot(qChildren, (snapshot) => {
         const loadedChildren: Child[] = [];
         snapshot.forEach((doc) => loadedChildren.push(doc.data() as Child));
         loadedChildren.sort((a, b) => a.createdAt - b.createdAt);
         setChildren(loadedChildren);
         
-        // Set initial child
+        // 設置初始孩子
         if (loadedChildren.length > 0) {
           setCurrentChildId(prev => {
             const exists = loadedChildren.find(c => c.id === prev);
@@ -84,16 +134,16 @@ const App: React.FC = () => {
         }
       }, (error) => console.error("Firestore Children Error:", error));
 
-      // 2. Transactions (Filter by userId)
-      const qTx = query(collection(db, 'transactions'), where('userId', '==', user.uid));
+      // 2. Transactions (依 teamId 過濾)
+      const qTx = query(collection(db, 'transactions'), where('teamId', '==', userTeamId));
       const unsubTx = onSnapshot(qTx, (snapshot) => {
         const loaded: Transaction[] = [];
         snapshot.forEach((doc) => loaded.push(doc.data() as Transaction));
         setTransactions(loaded);
       }, (error) => console.error("Firestore Tx Error:", error));
 
-      // 3. Settlements (Filter by userId)
-      const qSet = query(collection(db, 'settlements'), where('userId', '==', user.uid));
+      // 3. Settlements (依 teamId 過濾)
+      const qSet = query(collection(db, 'settlements'), where('teamId', '==', userTeamId));
       const unsubSet = onSnapshot(qSet, (snapshot) => {
         const loaded: Settlement[] = [];
         snapshot.forEach((doc) => loaded.push(doc.data() as Settlement));
@@ -106,7 +156,7 @@ const App: React.FC = () => {
         unsubSet();
       };
     } else if (isGuest || (!db && !user)) {
-      // --- LOCAL STORAGE MODE (Fallback/Guest) ---
+      // --- 本地儲存模式 (備用/訪客) ---
       console.log("Using LocalStorage Mode");
       
       const loadFromStorage = () => {
@@ -136,19 +186,19 @@ const App: React.FC = () => {
       window.addEventListener('storage', loadFromStorage);
       return () => window.removeEventListener('storage', loadFromStorage);
     }
-  }, [useFirestore, user, isGuest, authLoading]);
+  }, [useFirestore, user, isGuest, authLoading, userTeamId]);
 
-  // --- Migration (Local -> Cloud) ---
+  // --- 遷移 (本地 -> 雲端) ---
   useEffect(() => {
     const migrateData = async () => {
-      if (!useFirestore || !db || !user) return;
+      if (!useFirestore || !db || !user || !userTeamId) return;
 
       try {
-        // Only migrate if cloud is empty for this user
-        const childrenSnapshot = await getDocs(query(collection(db, 'children'), where('userId', '==', user.uid)));
+        // 僅在該使用者/團隊的雲端資料為空時才遷移
+        const childrenSnapshot = await getDocs(query(collection(db, 'children'), where('teamId', '==', userTeamId)));
         if (!childrenSnapshot.empty) return; 
 
-        console.log("Migrating local data to Firestore for user:", user.uid);
+        console.log("Migrating local data to Firestore for team:", userTeamId);
         const storedChildrenStr = localStorage.getItem(APP_STORAGE_KEYS.CHILDREN);
         const storedTransactionsStr = localStorage.getItem(APP_STORAGE_KEYS.TRANSACTIONS);
         const storedSettlementsStr = localStorage.getItem(APP_STORAGE_KEYS.SETTLEMENTS);
@@ -156,22 +206,22 @@ const App: React.FC = () => {
         if (storedChildrenStr) {
           const localChildren: Child[] = JSON.parse(storedChildrenStr);
           for (const child of localChildren) {
-            // Add userId to migrated data
-            const newChild = { ...child, userId: user.uid };
+            // 為遷移的資料添加 userId 和 teamId
+            const newChild = { ...child, userId: user.uid, teamId: userTeamId };
             await setDoc(doc(db, 'children', child.id), newChild);
           }
         }
         if (storedTransactionsStr) {
           const localTx: Transaction[] = JSON.parse(storedTransactionsStr);
           for (const tx of localTx) {
-            const newTx = { ...tx, userId: user.uid };
+            const newTx = { ...tx, userId: user.uid, teamId: userTeamId };
             await setDoc(doc(db, 'transactions', tx.id), newTx);
           }
         }
         if (storedSettlementsStr) {
           const localSettlements: Settlement[] = JSON.parse(storedSettlementsStr);
           for (const s of localSettlements) {
-            const newS = { ...s, userId: user.uid };
+            const newS = { ...s, userId: user.uid, teamId: userTeamId };
             await setDoc(doc(db, 'settlements', s.id), newS);
           }
         }
@@ -181,7 +231,7 @@ const App: React.FC = () => {
     };
 
     migrateData();
-  }, [useFirestore, user]);
+  }, [useFirestore, user, userTeamId]);
 
   // --- Helper for LocalStorage Updates ---
   const updateLocalStorage = (key: string, data: any) => {
@@ -221,12 +271,13 @@ const App: React.FC = () => {
   const handleSaveChild = async (name: string, avatar: string) => {
     const newChildData = { name, avatar };
     
-    if (useFirestore && db && user) {
+    if (useFirestore && db && user && userTeamId) {
       try {
         if (childModalMode === 'add') {
           const newChild: Child = {
             id: crypto.randomUUID(),
-            userId: user.uid, // Bind to user
+            userId: user.uid,
+            teamId: userTeamId, // 綁定到團隊以實現資料共享
             name,
             avatar,
             createdAt: Date.now(),
@@ -261,7 +312,7 @@ const App: React.FC = () => {
     }
   };
 
-  const handleAddTransaction = async (newTx: Omit<Transaction, 'id' | 'createdAt' | 'childId' | 'userId'>) => {
+  const handleAddTransaction = async (newTx: Omit<Transaction, 'id' | 'createdAt' | 'childId' | 'userId' | 'teamId'>) => {
     if (!currentChildId) return;
     
     const transaction: Transaction = {
@@ -269,10 +320,11 @@ const App: React.FC = () => {
       id: crypto.randomUUID(),
       childId: currentChildId,
       createdAt: Date.now(),
-      ...(user && { userId: user.uid }) // Bind to user if logged in
+      ...(user && { userId: user.uid }),
+      ...(userTeamId && { teamId: userTeamId }) // Bind to team for data sharing
     };
 
-    if (useFirestore && db && user) {
+    if (useFirestore && db && user && userTeamId) {
       try {
         await setDoc(doc(db, 'transactions', transaction.id), transaction);
       } catch (error) {
@@ -306,15 +358,16 @@ const App: React.FC = () => {
       date: selectedDate,
       amountCleared: amountToClear,
       createdAt: Date.now(),
-      ...(user && { userId: user.uid }) // Bind to user
+      ...(user && { userId: user.uid }),
+      ...(userTeamId && { teamId: userTeamId }) // 綁定到團隊以實現資料共享
     };
 
-    if (useFirestore && db && user) {
+    if (useFirestore && db && user && userTeamId) {
       try {
-        // Delete existing for this day/child first
+        // 先刪除該日/該孩子的現有結算
         const q = query(
           collection(db, 'settlements'), 
-          where('userId', '==', user.uid),
+          where('teamId', '==', userTeamId),
           where('childId', '==', currentChildId),
           where('date', '==', selectedDate)
         );
@@ -429,13 +482,24 @@ const App: React.FC = () => {
              )}
            </div>
            
-           <button 
-             onClick={handleSignOut}
-             className="text-indigo-200 hover:text-white p-1 rounded-full hover:bg-indigo-500 transition"
-             title="登出"
-           >
-             <LogOut size={18} />
-           </button>
+           <div className="flex items-center gap-2">
+             {useFirestore && (
+               <button 
+                 onClick={() => setShowTeamManagement(true)}
+                 className="text-indigo-200 hover:text-white p-1 rounded-full hover:bg-indigo-500 transition"
+                 title="團隊管理"
+               >
+                 <Users size={18} />
+               </button>
+             )}
+             <button 
+               onClick={handleSignOut}
+               className="text-indigo-200 hover:text-white p-1 rounded-full hover:bg-indigo-500 transition"
+               title="登出"
+             >
+               <LogOut size={18} />
+             </button>
+           </div>
         </div>
 
         {/* Child List */}
@@ -651,6 +715,33 @@ const App: React.FC = () => {
         initialAvatar={childModalMode === 'edit' ? currentChild?.avatar : undefined}
         mode={childModalMode}
       />
+
+      {/* 團隊管理 Modal */}
+      {showTeamManagement && db && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-50 rounded-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
+            <div className="sticky top-0 bg-white border-b border-gray-200 p-4 flex justify-between items-center rounded-t-2xl z-10">
+              <h2 className="text-xl font-bold">團隊管理</h2>
+              <button 
+                onClick={() => setShowTeamManagement(false)}
+                className="p-2 hover:bg-gray-100 rounded-full transition"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="p-4">
+              <TeamManagement 
+                user={user!}
+                userProfile={userProfile}
+                db={db}
+                onProfileUpdate={() => {
+                  // 檔案會透過監聽器自動更新
+                }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
