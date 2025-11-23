@@ -1,14 +1,14 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { ChevronLeft, ChevronRight, Wallet, PiggyBank, History, Plus, Users, Pencil, CloudOff, Cloud, LogOut, X } from 'lucide-react';
-import { 
-  collection, 
-  onSnapshot, 
-  doc, 
-  setDoc, 
-  deleteDoc, 
-  query, 
-  where, 
-  getDocs 
+import {
+  collection,
+  onSnapshot,
+  doc,
+  setDoc,
+  deleteDoc,
+  query,
+  where,
+  getDocs
 } from 'firebase/firestore';
 import { User } from 'firebase/auth';
 import { db, auth } from './firebase';
@@ -29,13 +29,13 @@ const App: React.FC = () => {
 
   // --- State ---
   const [currentDate, setCurrentDate] = useState(new Date());
-  
+
   // Data State
   const [children, setChildren] = useState<Child[]>([]);
   const [currentChildId, setCurrentChildId] = useState<string | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [settlements, setSettlements] = useState<Settlement[]>([]);
-  
+
   // UI State
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -114,7 +114,7 @@ const App: React.FC = () => {
 
     if (useFirestore && db && user) {
       // --- FIRESTORE 模式 (基於團隊的資料共享) ---
-      
+
       // 1. Children (依 teamId 過濾)
       const qChildren = query(collection(db, 'children'), where('teamId', '==', userTeamId));
       const unsubChildren = onSnapshot(qChildren, (snapshot) => {
@@ -122,7 +122,7 @@ const App: React.FC = () => {
         snapshot.forEach((doc) => loadedChildren.push(doc.data() as Child));
         loadedChildren.sort((a, b) => a.createdAt - b.createdAt);
         setChildren(loadedChildren);
-        
+
         // 設置初始孩子
         if (loadedChildren.length > 0) {
           setCurrentChildId(prev => {
@@ -158,7 +158,7 @@ const App: React.FC = () => {
     } else if (isGuest || (!db && !user)) {
       // --- 本地儲存模式 (備用/訪客) ---
       console.log("Using LocalStorage Mode");
-      
+
       const loadFromStorage = () => {
         try {
           const storedChildren = localStorage.getItem(APP_STORAGE_KEYS.CHILDREN);
@@ -167,11 +167,11 @@ const App: React.FC = () => {
 
           const loadedChildren = storedChildren ? JSON.parse(storedChildren) : [];
           setChildren(loadedChildren);
-          
+
           if (loadedChildren.length > 0) {
             setCurrentChildId(prev => {
-               const exists = loadedChildren.find((c: Child) => c.id === prev);
-               return exists ? prev : loadedChildren[0].id;
+              const exists = loadedChildren.find((c: Child) => c.id === prev);
+              return exists ? prev : loadedChildren[0].id;
             });
           }
 
@@ -196,7 +196,7 @@ const App: React.FC = () => {
       try {
         // 僅在該使用者/團隊的雲端資料為空時才遷移
         const childrenSnapshot = await getDocs(query(collection(db, 'children'), where('teamId', '==', userTeamId)));
-        if (!childrenSnapshot.empty) return; 
+        if (!childrenSnapshot.empty) return;
 
         console.log("Migrating local data to Firestore for team:", userTeamId);
         const storedChildrenStr = localStorage.getItem(APP_STORAGE_KEYS.CHILDREN);
@@ -242,7 +242,7 @@ const App: React.FC = () => {
   };
 
   // --- Actions ---
-  
+
   const handleSignOut = async () => {
     if (auth) {
       await auth.signOut();
@@ -270,7 +270,7 @@ const App: React.FC = () => {
 
   const handleSaveChild = async (name: string, avatar: string) => {
     const newChildData = { name, avatar };
-    
+
     if (useFirestore && db && user && userTeamId) {
       try {
         if (childModalMode === 'add') {
@@ -305,16 +305,16 @@ const App: React.FC = () => {
         updateLocalStorage(APP_STORAGE_KEYS.CHILDREN, updated);
         setCurrentChildId(newChild.id);
       } else {
-         if (!currentChildId) return;
-         const updated = children.map(c => c.id === currentChildId ? { ...c, ...newChildData } : c);
-         updateLocalStorage(APP_STORAGE_KEYS.CHILDREN, updated);
+        if (!currentChildId) return;
+        const updated = children.map(c => c.id === currentChildId ? { ...c, ...newChildData } : c);
+        updateLocalStorage(APP_STORAGE_KEYS.CHILDREN, updated);
       }
     }
   };
 
   const handleAddTransaction = async (newTx: Omit<Transaction, 'id' | 'createdAt' | 'childId' | 'userId' | 'teamId'>) => {
     if (!currentChildId) return;
-    
+
     const transaction: Transaction = {
       ...newTx,
       id: crypto.randomUUID(),
@@ -366,14 +366,14 @@ const App: React.FC = () => {
       try {
         // 先刪除該日/該孩子的現有結算
         const q = query(
-          collection(db, 'settlements'), 
+          collection(db, 'settlements'),
           where('teamId', '==', userTeamId),
           where('childId', '==', currentChildId),
           where('date', '==', selectedDate)
         );
         const snapshot = await getDocs(q);
         await Promise.all(snapshot.docs.map(d => deleteDoc(d.ref)));
-        
+
         await setDoc(doc(db, 'settlements', newSettlement.id), newSettlement);
       } catch (error) {
         console.error("Error settling:", error);
@@ -421,12 +421,12 @@ const App: React.FC = () => {
   }, [childTransactions, lastSettlement]);
 
   const getPendingAmountForDate = (targetDateStr: string) => {
-     if (!currentChildId) return 0;
-     const prevSettlements = childSettlements.filter(s => s.date < targetDateStr);
-     const lastPrevSettlement = prevSettlements.sort((a, b) => b.date.localeCompare(a.date))[0];
-     const startDate = lastPrevSettlement ? lastPrevSettlement.date : '0000-00-00';
-     const txsInRange = childTransactions.filter(t => t.date > startDate && t.date <= targetDateStr);
-     return txsInRange.reduce((acc, t) => t.type === TransactionType.INCOME ? acc + t.amount : acc - t.amount, 0);
+    if (!currentChildId) return 0;
+    const prevSettlements = childSettlements.filter(s => s.date < targetDateStr);
+    const lastPrevSettlement = prevSettlements.sort((a, b) => b.date.localeCompare(a.date))[0];
+    const startDate = lastPrevSettlement ? lastPrevSettlement.date : '0000-00-00';
+    const txsInRange = childTransactions.filter(t => t.date > startDate && t.date <= targetDateStr);
+    return txsInRange.reduce((acc, t) => t.type === TransactionType.INCOME ? acc + t.amount : acc - t.amount, 0);
   };
 
   // --- View ---
@@ -465,41 +465,41 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen flex flex-col max-w-lg mx-auto bg-gray-50 shadow-2xl border-x border-gray-200 font-sans">
-      
+
       {/* Header */}
       <header className="bg-indigo-600 text-white rounded-b-3xl shadow-lg z-10 relative transition-all duration-300">
         {/* Header Top Row */}
         <div className="flex justify-between items-start px-4 pt-3">
-           <div className="flex items-center gap-2">
-             {useFirestore ? (
-               <div className="flex items-center gap-1 text-[10px] bg-indigo-500/50 px-2 py-1 rounded-full text-green-200 border border-green-400/30">
-                 <Cloud size={12} /> 雲端同步中
-               </div>
-             ) : (
-               <div className="flex items-center gap-1 text-[10px] bg-orange-500/50 px-2 py-1 rounded-full text-orange-100 border border-orange-400/30">
-                 <CloudOff size={12} /> 離線模式
-               </div>
-             )}
-           </div>
-           
-           <div className="flex items-center gap-2">
-             {useFirestore && (
-               <button 
-                 onClick={() => setShowTeamManagement(true)}
-                 className="text-indigo-200 hover:text-white p-1 rounded-full hover:bg-indigo-500 transition"
-                 title="團隊管理"
-               >
-                 <Users size={18} />
-               </button>
-             )}
-             <button 
-               onClick={handleSignOut}
-               className="text-indigo-200 hover:text-white p-1 rounded-full hover:bg-indigo-500 transition"
-               title="登出"
-             >
-               <LogOut size={18} />
-             </button>
-           </div>
+          <div className="flex items-center gap-2">
+            {useFirestore ? (
+              <div className="flex items-center gap-1 text-[10px] bg-indigo-500/50 px-2 py-1 rounded-full text-green-200 border border-green-400/30">
+                <Cloud size={12} /> 雲端同步中
+              </div>
+            ) : (
+              <div className="flex items-center gap-1 text-[10px] bg-orange-500/50 px-2 py-1 rounded-full text-orange-100 border border-orange-400/30">
+                <CloudOff size={12} /> 離線模式
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            {useFirestore && (
+              <button
+                onClick={() => setShowTeamManagement(true)}
+                className="text-indigo-200 hover:text-white p-1 rounded-full hover:bg-indigo-500 transition"
+                title="團隊管理"
+              >
+                <Users size={18} />
+              </button>
+            )}
+            <button
+              onClick={handleSignOut}
+              className="text-indigo-200 hover:text-white p-1 rounded-full hover:bg-indigo-500 transition"
+              title="登出"
+            >
+              <LogOut size={18} />
+            </button>
+          </div>
         </div>
 
         {/* Child List */}
@@ -508,17 +508,16 @@ const App: React.FC = () => {
             <button
               key={child.id}
               onClick={() => setCurrentChildId(child.id)}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium transition whitespace-nowrap ${
-                currentChildId === child.id 
-                  ? 'bg-white text-indigo-600 shadow-md ring-2 ring-indigo-200' 
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium transition whitespace-nowrap ${currentChildId === child.id
+                  ? 'bg-white text-indigo-600 shadow-md ring-2 ring-indigo-200'
                   : 'bg-indigo-700/50 text-indigo-100 hover:bg-indigo-700'
-              }`}
+                }`}
             >
               <span className="text-lg leading-none">{child.avatar}</span>
               {child.name}
             </button>
           ))}
-          <button 
+          <button
             onClick={openAddChildModal}
             className="flex items-center justify-center w-8 h-8 rounded-full bg-indigo-700/30 hover:bg-indigo-700/50 text-indigo-200 transition shrink-0"
           >
@@ -532,7 +531,7 @@ const App: React.FC = () => {
             <div>
               <h1 className="text-2xl font-bold tracking-tight">Fun財成長</h1>
               <div className="text-indigo-200 text-sm flex items-center gap-1">
-                <span className="opacity-70">記帳對象:</span> 
+                <span className="opacity-70">記帳對象:</span>
                 <span className="font-bold text-white flex items-center gap-1">
                   {currentChild ? (
                     <>
@@ -542,7 +541,7 @@ const App: React.FC = () => {
                   ) : '請新增孩子'}
                 </span>
                 {currentChild && (
-                  <button 
+                  <button
                     onClick={openEditChildModal}
                     className="p-1 ml-1 hover:bg-indigo-500/50 rounded-full text-indigo-200 hover:text-white transition"
                   >
@@ -567,23 +566,22 @@ const App: React.FC = () => {
               </div>
             </div>
 
-            <div className={`rounded-xl p-4 border backdrop-blur-md transition-colors ${
-              pendingSettlementAmount > 0 
-                ? 'bg-orange-500/20 border-orange-300/30 text-orange-50' 
+            <div className={`rounded-xl p-4 border backdrop-blur-md transition-colors ${pendingSettlementAmount > 0
+                ? 'bg-orange-500/20 border-orange-300/30 text-orange-50'
                 : 'bg-white/10 border-white/20'
-            }`}>
-               <div className="flex items-center gap-2 mb-1 text-indigo-100 text-sm font-medium">
+              }`}>
+              <div className="flex items-center gap-2 mb-1 text-indigo-100 text-sm font-medium">
                 <History size={16} />
                 <span>
-                   {pendingSettlementAmount >= 0 ? '父母應給付' : '孩子應歸還'}
+                  {pendingSettlementAmount >= 0 ? '父母應給付' : '孩子應歸還'}
                 </span>
               </div>
               <div className="text-2xl font-bold">
                 ${Math.abs(pendingSettlementAmount).toLocaleString()}
               </div>
               <div className="text-xs mt-1 opacity-80">
-                {lastSettlement 
-                  ? `自 ${lastSettlement.date} 結算後` 
+                {lastSettlement
+                  ? `自 ${lastSettlement.date} 結算後`
                   : '尚未進行過結算'}
               </div>
             </div>
@@ -601,9 +599,9 @@ const App: React.FC = () => {
             {year}年 {month + 1}月
           </h2>
           {(!isSameDay(new Date(), currentDate)) && (
-             <button onClick={goToToday} className="text-xs bg-indigo-100 text-indigo-700 px-2 py-1 rounded-md font-bold">
-               回今天
-             </button>
+            <button onClick={goToToday} className="text-xs bg-indigo-100 text-indigo-700 px-2 py-1 rounded-md font-bold">
+              回今天
+            </button>
           )}
         </div>
         <button onClick={nextMonth} className="p-2 hover:bg-gray-200 rounded-full transition">
@@ -637,8 +635,8 @@ const App: React.FC = () => {
                 className={`
                   relative aspect-square rounded-xl border transition-all cursor-pointer flex flex-col items-center justify-start pt-1
                   hover:shadow-md active:scale-95
-                  ${isToday 
-                    ? 'bg-indigo-50 border-indigo-300 ring-1 ring-indigo-300' 
+                  ${isToday
+                    ? 'bg-indigo-50 border-indigo-300 ring-1 ring-indigo-300'
                     : 'bg-white border-gray-100 shadow-sm'}
                   ${isSettled ? 'bg-orange-50/50' : ''}
                 `}
@@ -648,17 +646,16 @@ const App: React.FC = () => {
                 </span>
 
                 {hasData && (
-                  <div className={`text-[10px] font-bold mt-1 truncate w-full text-center px-0.5 ${
-                    dailyTotal > 0 ? 'text-green-600' : dailyTotal < 0 ? 'text-red-500' : 'text-gray-500'
-                  }`}>
+                  <div className={`text-[10px] font-bold mt-1 truncate w-full text-center px-0.5 ${dailyTotal > 0 ? 'text-green-600' : dailyTotal < 0 ? 'text-red-500' : 'text-gray-500'
+                    }`}>
                     {dailyTotal > 0 ? '+' : ''}{dailyTotal}
                   </div>
                 )}
 
                 {isSettled && (
-                   <div className="absolute bottom-1 right-1">
-                     <div className="w-2 h-2 bg-orange-500 rounded-full ring-2 ring-white"></div>
-                   </div>
+                  <div className="absolute bottom-1 right-1">
+                    <div className="w-2 h-2 bg-orange-500 rounded-full ring-2 ring-white"></div>
+                  </div>
                 )}
               </div>
             );
@@ -666,25 +663,25 @@ const App: React.FC = () => {
         </div>
 
         {children.length === 0 && (
-           <div className="mt-8 p-8 text-center bg-white rounded-xl border-2 border-dashed border-indigo-200">
-              <div className="bg-indigo-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-                <Users className="text-indigo-500" size={32}/>
-              </div>
-              <h3 className="text-lg font-bold text-gray-800 mb-2">歡迎使用 Fun財成長</h3>
-              <p className="text-gray-500 mb-4">請先建立一個孩子的檔案開始記帳</p>
-              <button 
-                onClick={openAddChildModal}
-                className="bg-indigo-600 text-white px-6 py-2 rounded-lg font-bold shadow hover:bg-indigo-700"
-              >
-                建立孩子檔案
-              </button>
-           </div>
+          <div className="mt-8 p-8 text-center bg-white rounded-xl border-2 border-dashed border-indigo-200">
+            <div className="bg-indigo-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+              <Users className="text-indigo-500" size={32} />
+            </div>
+            <h3 className="text-lg font-bold text-gray-800 mb-2">歡迎使用 Fun財成長</h3>
+            <p className="text-gray-500 mb-4">請先建立一個孩子的檔案開始記帳</p>
+            <button
+              onClick={openAddChildModal}
+              className="bg-indigo-600 text-white px-6 py-2 rounded-lg font-bold shadow hover:bg-indigo-700"
+            >
+              建立孩子檔案
+            </button>
+          </div>
         )}
-        
+
         {children.length > 0 && (
           <div className="mt-8 p-4 bg-white rounded-xl shadow-sm border border-gray-100 text-sm text-gray-500">
             <h3 className="font-bold mb-2 text-gray-700">使用說明</h3>
-            <ul className="space-y-1 list-disc list-disc-inside">
+            <ul className="space-y-1 list-disc list-inside">
               <li>上方可切換不同孩子的帳戶。</li>
               <li>點擊日期可新增收入或支出。</li>
               <li>數字代表當日總結金額 (綠色為正，紅色為負)。</li>
@@ -694,7 +691,7 @@ const App: React.FC = () => {
         )}
       </main>
 
-      <DayModal 
+      <DayModal
         date={selectedDate || ''}
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
@@ -707,7 +704,7 @@ const App: React.FC = () => {
         pendingAmountToDate={selectedDate ? getPendingAmountForDate(selectedDate) : 0}
       />
 
-      <AddChildModal 
+      <AddChildModal
         isOpen={isChildModalOpen}
         onClose={() => setIsChildModalOpen(false)}
         onSave={handleSaveChild}
@@ -722,7 +719,7 @@ const App: React.FC = () => {
           <div className="bg-gray-50 rounded-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
             <div className="sticky top-0 bg-white border-b border-gray-200 p-4 flex justify-between items-center rounded-t-2xl z-10">
               <h2 className="text-xl font-bold">團隊管理</h2>
-              <button 
+              <button
                 onClick={() => setShowTeamManagement(false)}
                 className="p-2 hover:bg-gray-100 rounded-full transition"
               >
@@ -730,7 +727,7 @@ const App: React.FC = () => {
               </button>
             </div>
             <div className="p-4">
-              <TeamManagement 
+              <TeamManagement
                 user={user!}
                 userProfile={userProfile}
                 db={db}
