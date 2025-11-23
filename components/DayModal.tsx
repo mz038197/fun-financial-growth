@@ -56,21 +56,22 @@ const DayModal: React.FC<DayModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm transition-opacity">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[85vh] md:max-h-[90vh]">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm transition-opacity">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col h-[calc(100vh-6rem)] sm:h-auto sm:max-h-[85vh] md:max-h-[90vh]">
         {/* Header */}
-        <div className="p-4 bg-indigo-600 text-white flex justify-between items-center shrink-0">
-          <h2 className="text-lg font-bold">{displayDate}</h2>
+        <div className="p-3 sm:p-4 bg-indigo-600 text-white flex justify-between items-center shrink-0">
+          <h2 className="text-base sm:text-lg font-bold">{displayDate}</h2>
           <button onClick={onClose} className="p-1 hover:bg-indigo-700 rounded-full transition">
-            <X size={24} />
+            <X size={20} className="sm:hidden" />
+            <X size={24} className="hidden sm:inline" />
           </button>
         </div>
 
         {/* Content */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4 md:space-y-6 min-h-0">
+        <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4 md:space-y-6 min-h-0">
           
           {/* Settlement Section */}
-          <div className={`p-4 rounded-xl border-2 ${settlement ? 'border-green-500 bg-green-50' : 'border-orange-200 bg-orange-50'}`}>
+          <div className={`p-3 sm:p-4 rounded-xl border-2 ${settlement ? 'border-green-500 bg-green-50' : 'border-orange-200 bg-orange-50'}`}>
             {settlement ? (
               <div className="flex flex-col items-center text-center space-y-2">
                 <CheckCircle size={40} className="text-green-500" />
@@ -107,30 +108,31 @@ const DayModal: React.FC<DayModalProps> = ({
 
           {/* Transaction List */}
           <div>
-            <h3 className="text-gray-700 font-bold mb-3">當日明細</h3>
+            <h3 className="text-sm sm:text-base text-gray-700 font-bold mb-2 sm:mb-3">當日明細</h3>
             {transactions.length === 0 ? (
-              <div className="text-center py-6 text-gray-400 bg-gray-50 rounded-lg border border-dashed border-gray-300">
+              <div className="text-center py-4 sm:py-6 text-sm sm:text-base text-gray-400 bg-gray-50 rounded-lg border border-dashed border-gray-300">
                 無紀錄
               </div>
             ) : (
               <ul className="space-y-2">
                 {transactions.map((t) => (
-                  <li key={t.id} className="flex justify-between items-center p-3 bg-gray-50 rounded-lg border border-gray-100">
-                    <div className="flex items-center gap-3">
-                      <div className={`w-2 h-8 rounded-full ${t.type === TransactionType.INCOME ? 'bg-green-500' : 'bg-red-500'}`}></div>
-                      <div>
-                        <div className="font-medium text-gray-800">{t.description}</div>
+                  <li key={t.id} className="flex justify-between items-center p-2 sm:p-3 bg-gray-50 rounded-lg border border-gray-100">
+                    <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
+                      <div className={`w-1.5 sm:w-2 h-6 sm:h-8 rounded-full shrink-0 ${t.type === TransactionType.INCOME ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                      <div className="min-w-0 flex-1">
+                        <div className="font-medium text-sm sm:text-base text-gray-800 truncate">{t.description}</div>
                         <div className="text-xs text-gray-500">
                           {t.type === TransactionType.INCOME ? '收入' : '支出'}
                         </div>
                       </div>
                     </div>
-                    <div className="flex items-center gap-3">
-                      <span className={`font-bold ${t.type === TransactionType.INCOME ? 'text-green-600' : 'text-red-600'}`}>
+                    <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+                      <span className={`font-bold text-sm sm:text-base ${t.type === TransactionType.INCOME ? 'text-green-600' : 'text-red-600'}`}>
                         {t.type === TransactionType.INCOME ? '+' : '-'}${t.amount.toLocaleString()}
                       </span>
-                      <button onClick={() => onDeleteTransaction(t.id)} className="text-gray-400 hover:text-red-500">
-                        <Trash2 size={16} />
+                      <button onClick={() => onDeleteTransaction(t.id)} className="text-gray-400 hover:text-red-500 p-1">
+                        <Trash2 size={14} className="sm:hidden" />
+                        <Trash2 size={16} className="hidden sm:inline" />
                       </button>
                     </div>
                   </li>
